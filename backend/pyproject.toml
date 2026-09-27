@@ -1,0 +1,25 @@
+[project]
+name = "sql-query-agent"
+version = "0.1.0"
+description = "LangGraph agent that turns natural language into validated, read-only SQL"
+requires-python = ">=3.11"
+dependencies = [
+    "sqlglot>=30.0",
+    "pydantic-settings>=2.0",
+    "langgraph>=1.2",
+    "langgraph-checkpoint-sqlite>=3.1",
+    "langchain>=1.4",
+    "langchain-google-genai>=4.4",
+    "langchain-nvidia-ai-endpoints>=1.4",
+    "fastapi>=0.140",
+    "uvicorn[standard]>=0.50",
+    "aiosqlite>=0.22",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.28"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
