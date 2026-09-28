@@ -180,3 +180,22 @@ def test_resume_and_cancel_when_idle(make_client):
     with make_client([]) as client:
         assert client.get(f"/api/threads/{thread_id}/events").status_code == 204
         assert client.post(f"/api/threads/{thread_id}/cancel").status_code == 404
+
+
+def test_password_protection(db_path, tmp_path):
+    settings = Settings(database_path=db_path, data_dir=tmp_path / "data", app_password="s3cret")
+    with TestClient(create_app(settings, LLM(ScriptedChatModel(replies=[])))) as client:
+        assert client.get("/api/health").status_code == 200  # open for the host's health check
+        denied = client.get("/api/schema")
+        assert denied.status_code == 401
+        assert denied.headers["www-authenticate"].startswith("Basic")
+        assert client.get("/api/schema", auth=("anyone", "wrong")).status_code == 401
+        assert client.get("/api/schema", headers={"Authorization": "Basic !!notbase64"}).status_code == 401
+        assert client.get("/api/schema", auth=("anyone", "s3cret")).status_code == 200
+        r = client.post("/api/execute", json={"sql": "SELECT COUNT(*) FROM Orders"}, auth=("", "s3cret"))
+        assert r.status_code == 200
+
+
+def test_no_password_by_default(make_client):
+    with make_client([]) as client:
+        assert client.get("/api/schema").status_code == 200

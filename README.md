@@ -24,6 +24,7 @@ Agent:  I'm designed to assist only with SQL and database-related tasks. …
 - [Quick start](#quick-start)
 - [Manual setup](#manual-setup)
 - [Configuration](#configuration)
+- [Deployment (Render, free)](#deployment-render-free)
 - [Using the app](#using-the-app)
 - [Tests](#tests)
 - [How it works](#how-it-works)
@@ -151,6 +152,7 @@ keys are required.
 | `MAX_INPUT_CHARS` | `4000` | Longest accepted message |
 | `HISTORY_TURNS` | `6` | Previous turns given to the model as context |
 | `CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed browser origins (JSON list) |
+| `APP_PASSWORD` | *(none)* | When set, the app asks for this password (any username). Use it for public deployments |
 
 **Switching models.** Any provider supported by LangChain's `init_chat_model` works if its
 package is installed; `google_genai` and `nvidia` are included. The model must support tool
@@ -167,6 +169,42 @@ fallback.
 
 **Using your own database.** Point `DATABASE_PATH` at any SQLite file. The schema is read from the
 database at startup, so no code changes are needed.
+
+## Deployment (Render, free)
+
+The app deploys as **one Docker container**: FastAPI serves the API and the built React app on a
+single port. [`render.yaml`](render.yaml) sets it up on [Render](https://render.com)'s free tier.
+
+1. Push this repository to GitHub.
+2. In the Render dashboard: **New → Blueprint**, then pick the repository.
+3. Fill in the values it asks for:
+   - `NVIDIA_API_KEY` and/or `GOOGLE_API_KEY`
+   - `APP_PASSWORD`: **set one**. The URL is public, and without a password anyone can use your
+     API quota. Browsers show a login prompt; any username works.
+4. Click **Apply**. The first build takes a few minutes; you get a `https://<name>.onrender.com` URL.
+
+Every push to the default branch redeploys automatically.
+
+**Free-tier behaviour**
+
+- The service **sleeps after 15 minutes** without traffic; the next visit takes about a minute to
+  wake it. Open the URL a minute before a demo.
+- The disk is **wiped on sleep and redeploy**, so conversation history resets. The sample database
+  is rebuilt at every deploy, so queries are unaffected.
+- 512 MB of memory is enough: the app uses about 110 MB.
+
+**Run the container locally**
+
+```bash
+docker build -t sql-query-agent .
+docker run --rm -p 8000:8000 --env-file .env sql-query-agent
+# open http://localhost:8000
+```
+
+**Other hosts.** Any service that runs a Docker container and sets `PORT` works the same way.
+The backend needs a long-running process: chat turns run in the background and conversation state
+is kept on local disk. That's why it isn't deployed as serverless functions (e.g. Vercel), where
+instances can stop once a response is sent.
 
 ## Using the app
 
@@ -207,7 +245,7 @@ cd backend && .venv/bin/python -m app.cli
 cd backend && .venv/bin/pytest
 ```
 
-124 tests, no API key needed. They use a scripted fake chat model that plays back model replies,
+128 tests, no API key needed. They use a scripted fake chat model that plays back model replies,
 including tool calls, through LangChain's real tool-binding and structured-output code.
 
 | File | Covers |
@@ -278,6 +316,8 @@ frontend/src/       React app (App.tsx, components/, api.ts)
 database/           schema.sql, seed.sql, init_db.py
 docs/               architecture, prompts, schema
 scripts/            setup.sh, dev.sh
+Dockerfile          one container: built frontend + backend
+render.yaml         Render deployment blueprint
 ```
 
 ## Assumptions and limitations
@@ -304,6 +344,7 @@ scripts/            setup.sh, dev.sh
 | Port 5173 or 8000 already in use | Stop the other process, e.g. `lsof -ti :8000 \| xargs kill` |
 | Phone can't open the Network URL | Same Wi-Fi as the computer; allow incoming connections for `node` if macOS asks |
 | Requests time out | Free models can be slow at busy times; increase `LLM_TIMEOUT_SECONDS` |
+| Deployed app takes a minute to load | Render's free tier was asleep; it wakes on the first visit |
 
 ## Where to find each deliverable
 
@@ -317,3 +358,4 @@ scripts/            setup.sh, dev.sh
 | Sample database schema | [docs/SCHEMA.md](docs/SCHEMA.md), `database/schema.sql` |
 | Assumptions | [Assumptions and limitations](#assumptions-and-limitations) |
 | Tests | `backend/tests/` |
+| Dockerized deployment (bonus) | [`Dockerfile`](Dockerfile), [`render.yaml`](render.yaml), [Deployment](#deployment-render-free) |

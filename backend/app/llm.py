@@ -6,17 +6,23 @@ Fallbacks are applied after the shape because `bind_tools` and
 `with_structured_output` aren't available on a `RunnableWithFallbacks`.
 """
 
+import logging
 import os
+import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
 from langchain.chat_models import init_chat_model
 from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import BaseChatModel
-from langchain_core.output_parsers.openai_tools import PydanticToolsParser
+from langchain_core.messages import AIMessage
 from langchain_core.runnables import Runnable, RunnableLambda
+from langchain_core.utils.function_calling import convert_to_openai_tool
+from pydantic import ValidationError
 
 from app.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class LLM:
@@ -36,35 +42,73 @@ class LLM:
     def _shape(self, transform: Callable[[BaseChatModel], Runnable]) -> Runnable:
         runnable = transform(self.primary)
         if self.fallback is not None:
-            runnable = runnable.with_fallbacks([transform(self.fallback)])
+            # If both fail, LangChain re-raises the primary's error, so log each
+            # failure to keep the fallback's error visible too.
+            runnable = runnable.with_listeners(on_error=_log_failure("primary")).with_fallbacks(
+                [transform(self.fallback).with_listeners(on_error=_log_failure("fallback"))]
+            )
         return runnable
 
 
+def _log_failure(role: str) -> Callable:
+    def log(run: Any) -> None:
+        # run.error is the exception repr followed directly by its traceback.
+        summary = str(run.error).split("Traceback (most recent call last)")[0].strip()
+        logger.warning("%s model failed: %s", role.capitalize(), summary[:300])
+
+    return log
+
+
 class StructuredOutputError(Exception):
-    """The model answered without the required structured result."""
+    """The model answered without a valid structured result."""
 
 
 def _structured_output(model: BaseChatModel, schema: type) -> Runnable:
     if model._llm_type.startswith("chat-google"):
         runnable = model.with_structured_output(schema)  # Gemini's native JSON-schema mode
+
+        def require(result: Any) -> Any:
+            if result is None:
+                raise StructuredOutputError(f"model returned no {schema.__name__}")
+            return result
+
+        runnable = runnable | RunnableLambda(require)
     else:
         # Portable path: force a tool call and parse its arguments. Avoids
         # provider-specific modes (e.g. NIM's `guided_json`, which hosted NVIDIA
         # endpoints reject) and works with any model that supports tool calling.
-        runnable = model.bind_tools([schema], tool_choice="required") | PydanticToolsParser(
-            tools=[schema], first_tool_only=True
+        tool_name = convert_to_openai_tool(schema)["function"]["name"]
+        runnable = model.bind_tools([schema], tool_choice="required") | RunnableLambda(
+            lambda message: _parse_tool_output(message, schema, tool_name)
         )
 
-    def require(result: Any) -> Any:
-        if result is None:
-            raise StructuredOutputError(f"model returned no {schema.__name__}")
-        return result
-
-    # Smaller models occasionally skip the tool call; one retry usually fixes it.
+    # Models occasionally return nothing usable; one retry usually fixes it.
     # Other errors (rate limits, timeouts) go straight to the fallback model.
-    return (runnable | RunnableLambda(require)).with_retry(
-        retry_if_exception_type=(StructuredOutputError, OutputParserException), stop_after_attempt=2
+    return runnable.with_retry(
+        retry_if_exception_type=(StructuredOutputError,), stop_after_attempt=2
     )
+
+
+_JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _parse_tool_output(message: AIMessage, schema: type, tool_name: str) -> Any:
+    for call in message.tool_calls:
+        if call["name"] == tool_name:
+            try:
+                return schema.model_validate(call["args"])
+            except ValidationError as e:
+                raise StructuredOutputError(f"invalid {tool_name} arguments: {e}") from e
+
+    # Some models (e.g. gpt-oss) sometimes ignore `tool_choice` and write the tool
+    # arguments as JSON text instead. Accept it if it validates against the schema.
+    match = _JSON_OBJECT.search(message.text)
+    if match:
+        try:
+            return schema.model_validate_json(match.group(0))
+        except ValidationError:
+            pass
+    raise StructuredOutputError(f"model returned no {tool_name}")
 
 
 # Environment variables each provider reads its API key from (any one is enough).

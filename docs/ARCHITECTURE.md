@@ -332,8 +332,12 @@ LLM_FALLBACK_MODEL=google_genai:gemini-3.8-flash # on errors, rate limits, timeo
   forced tool call parsed into the Pydantic model. The NVIDIA wrapper's default mode
   (`guided_json`) is rejected by NVIDIA's hosted endpoints, so the tool-call path is what makes
   NVIDIA work.
-- **Retry:** smaller models occasionally skip the structured tool call; that is retried once.
-  Rate limits and timeouts go straight to the fallback model.
+- **Lenient parsing:** `gpt-oss-20b` sometimes ignores the forced tool call and writes the
+  arguments as JSON text instead. That JSON is accepted when it validates against the schema.
+- **Retry:** a reply with no usable result is retried once. Rate limits and timeouts go straight
+  to the fallback model.
+- **Visible failures:** when both models fail, LangChain re-raises only the primary's error, so
+  each model's failure is logged (`Primary model failed: …`, `Fallback model failed: …`).
 - **Model choice:** Gemini's free tier allows only 20 requests per day per model (each question
   takes 3–5 calls). Of the NVIDIA models tested, `gpt-oss-20b` was fast and reliable with tool
   calling; DeepSeek and Nemotron timed out on the free tier.
@@ -405,5 +409,6 @@ React 19 + Vite + TypeScript, plain CSS with light and dark themes.
 | LLM latency and rate limits | Paid tier, response caching, fallback providers (already wired) |
 | SQLite checkpointer (single file) | `PostgresSaver`, shared by several API replicas |
 | In-process turn manager | Task queue (e.g. Redis) so any replica can serve re-attach requests |
+| Ephemeral disk on free hosting | Postgres (e.g. Neon) for checkpoints and the thread list |
 | SQLite data store | Postgres read replica for execution |
 | Large schemas | Relevant-table retrieval in `retrieve_schema` (embeddings or keyword match) |

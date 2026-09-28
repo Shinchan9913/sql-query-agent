@@ -1,0 +1,22 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# In the Render dashboard: New > Blueprint > pick this repository.
+# You'll be asked for the values marked `sync: false`.
+services:
+  - type: web
+    name: sql-query-agent
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
+      - key: LLM_MODEL
+        value: nvidia:openai/gpt-oss-20b
+      - key: LLM_FALLBACK_MODEL
+        value: google_genai:gemini-3.8-flash

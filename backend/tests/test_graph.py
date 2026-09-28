@@ -299,6 +299,23 @@ def test_schema_question(run):
 
 # --- LLM gateway -----------------------------------------------------------------
 
+def test_classification_written_as_json_text_is_accepted(run):
+    # gpt-oss sometimes ignores tool_choice and writes the arguments as text.
+    state, _ = run([
+        text('{"intent": "out_of_scope", "task": "World Cup winner", "user_sql": null}'),
+    ], "Who won the FIFA World Cup?")
+    assert state["response"]["reason"] == "out_of_scope"
+
+
+def test_classification_retried_once_when_unusable(run):
+    state, model = run([
+        text("I think this is about sports."),
+        classify("out_of_scope"),
+    ], "Who won the FIFA World Cup?")
+    assert state["response"]["reason"] == "out_of_scope"
+    assert len(model.calls) == 2
+
+
 class FailingModel(ScriptedChatModel):
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         raise RuntimeError("429 rate limited")

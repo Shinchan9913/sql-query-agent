@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     database_path: Path = Path("database/sample.db")
     data_dir: Path = Path("data")  # conversation checkpoints and thread list
     cors_origins: list[str] = ["http://localhost:5173"]
+    # When set, every page and API call requires this password (HTTP Basic auth, any
+    # username). Use it for public deployments so strangers can't spend your API quota.
+    app_password: str | None = None
 
     # LLMs, in LangChain `provider:model` form
     llm_model: str = "nvidia:openai/gpt-oss-20b"

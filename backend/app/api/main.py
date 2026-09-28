@@ -1,10 +1,13 @@
 """HTTP API: `uvicorn app.api.main:app`."""
 
+import base64
+import binascii
 import logging
 import re
+import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -65,6 +68,19 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None) -> Fast
             await app.state.turns.shutdown()
 
     app = FastAPI(title="SQL Query Agent", lifespan=lifespan)
+    if settings.app_password:
+        password = settings.app_password
+
+        @app.middleware("http")
+        async def require_password(request: Request, call_next):
+            # The health check stays open so the host can monitor the service.
+            if request.url.path == "/api/health" or _password_matches(request, password):
+                return await call_next(request)
+            return Response(
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="SQL Query Agent", charset="UTF-8"'},
+            )
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -209,6 +225,17 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None) -> Fast
         app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
 
     return app
+
+
+def _password_matches(request: Request, password: str) -> bool:
+    scheme, _, encoded = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "basic":
+        return False
+    try:
+        _, _, given = base64.b64decode(encoded).decode("utf-8").partition(":")
+    except (binascii.Error, UnicodeDecodeError):
+        return False
+    return secrets.compare_digest(given.encode(), password.encode())
 
 
 app = create_app()
